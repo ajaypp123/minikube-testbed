@@ -1,0 +1,132 @@
+---
+
+- name: setup k8s cluster on manager and worker nodes
+  hosts: all
+  gather_facts: true
+  become: true
+  vars:
+    distribution: "{{ ansible_distribution | lower }}"
+    sysctl_items:
+      vm.max_map_count: 262144
+      vm.swappiness: 1
+      fs.inotify.max_user_instances: 8192
+      net.bridge.bridge-nf-call-iptables: 1
+      net.bridge.bridge-nf-call-ip6tables: 1
+    helm_version: 2.10.0
+
+  tasks:
+    - name: install default packages
+      package:
+        name: '{{ item }}'
+        state: present
+      with_items:
+        - net-tools
+        - strace
+        - curl
+        - ethtool
+        - ebtables
+        - socat
+        - dstat
+
+    - name: add docker-engine apt key
+      rpm_key:
+        key: '{{ item }}'
+        state: present
+      with_items:
+        - https://download.docker.com/linux/centos/gpg
+        - https://packages.cloud.google.com/yum/doc/yum-key.gpg
+        - https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+
+    - name: add docker-engine centos repo
+      get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+
+    - name: add kubernetes centos repo
+      yum_repository:
+        name: kubernetes
+        description: Kubernetes YUM repository for CentOS
+        baseurl: 'https://packages.cloud.google.com/yum/repos/kubernetes-el7-$basearch'
+        enabled: yes
+        gpgcheck: yes
+        gpgkey:
+          - https://packages.cloud.google.com/yum/doc/yum-key.gpg
+          - https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+
+    - name: install the packages (docker, kubeadm)
+      package:
+        name: '{{ item }}'
+        state: present
+      with_items:
+        - docker-ce
+        - kubectl
+
+    - name: ensure docker service will start on reboot
+      service:
+        name: '{{ item }}'
+        enabled: yes
+        state: started
+      with_items:
+        - docker
+
+    - name: add vagrant user to docker group
+      user: append=yes groups=docker name=vagrant
+
+    - name: kubelet doesn't like swap or firewall
+      shell: '{{ item }}'
+      with_items:
+        - "swapoff -a"
+        - "systemctl disable iptables-services || true"
+        - "systemctl stop iptables-services || true"
+        - "systemctl disable firewalld || true"
+        - "systemctl stop firewalld || true"
+
+    - name: remove swap from fstab
+      mount:
+        path: swap
+        src: /dev/mapper/centos-swap
+        fstype: swap
+        state: absent
+
+    - name: "other pre-launch configuration tuning: sysctl"
+      sysctl:
+        name: "{{ item.key }}"
+        state: present
+        value: "{{ item.value }}"
+        sysctl_set: yes        
+        reload: yes
+      with_dict: "{{ sysctl_items }}"
+
+    - name: add vagrant to group docker
+      user:
+        name: vagrant
+        groups: docker
+        state: present
+        append: true
+
+    - name: install minikube
+      get_url:
+        url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+        dest: /usr/bin/minikube
+        mode: 0755
+
+    - name: install helm
+      unarchive:
+        src: "https://storage.googleapis.com/kubernetes-helm/helm-v{{ helm_version }}-linux-amd64.tar.gz"
+        dest: /usr/bin
+        remote_src: yes
+        creates: helm
+        exclude: 
+          - "README.md"
+          - "LICENSE"
+        extra_opts: "--strip-components=1"
+
+
+    - name: setup minikube
+      become: no
+      script: setup_minikube.sh
+
+    - name: setup helm
+      become: no
+      command: helm init
+
