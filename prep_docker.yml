@@ -12,7 +12,7 @@
       fs.inotify.max_user_instances: 8192
       net.bridge.bridge-nf-call-iptables: 1
       net.bridge.bridge-nf-call-ip6tables: 1
-    helm_version: 2.10.0
+    helm_version: 2.11.0
 
   tasks:
     - name: install default packages
@@ -27,6 +27,9 @@
         - ebtables
         - socat
         - dstat
+        - git
+        - telnet
+        - wget
 
     - name: add docker-engine apt key
       rpm_key:
@@ -121,6 +124,12 @@
           - "LICENSE"
         extra_opts: "--strip-components=1"
 
+    - name: install teleconsole
+      unarchive:
+        src: https://github.com/gravitational/teleconsole/releases/download/0.4.0/teleconsole-v0.4.0-linux-amd64.tar.gz
+        dest: /usr/bin
+        remote_src: yes
+        creates: teleconsole
 
     - name: setup minikube
       become: no
